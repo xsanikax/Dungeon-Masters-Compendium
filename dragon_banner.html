@@ -1,0 +1,276 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Refined Dragon Fire Banner</title>
+    <style>
+        body {
+            margin: 0;
+            background-color: transparent; /* MAKE HTML BODY TRANSPARENT */
+            display: flex;
+            justify-content: center;
+            align-items: flex-start;
+            /* min-height: 100vh; */ /* Can be removed if not needed for standalone */
+            overflow-x: hidden;
+            cursor: crosshair;
+        }
+        #dragonBannerCanvas {
+            display: block;
+            max-width: 100%;
+            background-color: transparent; /* CANVAS ITSELF IS TRANSPARENT */
+        }
+    </style>
+</head>
+<body>
+    <canvas id="dragonBannerCanvas"></canvas>
+
+    <script>
+        const canvas = document.getElementById('dragonBannerCanvas');
+        const ctx = canvas.getContext('2d');
+
+        // This placeholder is replaced by dm_compendium.py with the Base64 image data
+        const dragonImageUrl = "DRAGON_IMAGE_DATA_URL_PLACEHOLDER"; 
+        const dragonImage = new Image();
+        let imageLoaded = false;
+        
+        dragonImage.onload = () => {
+            imageLoaded = true;
+            canvas.height = 350; 
+            canvas.width = dragonImage.naturalWidth * (canvas.height / dragonImage.naturalHeight);
+            if (canvas.width > window.innerWidth) {
+                canvas.width = window.innerWidth;
+                canvas.height = dragonImage.naturalHeight * (canvas.width / dragonImage.naturalWidth);
+            }
+            bannerWidth = canvas.width; 
+            bannerHeight = canvas.height;
+            setInteractiveParams(); 
+            if (!animationFrameId) { 
+                animate(); 
+            }          
+        };
+        
+        dragonImage.onerror = () => {
+            console.error("Error loading dragon image. Attempted src was effectively: " + dragonImage.src); // Log what src was
+            imageLoaded = false; 
+            // Fallback drawing on canvas if image fails
+            const cw = canvas.width || 300;
+            const ch = canvas.height || 150; 
+            if (cw > 0 && ch > 0) { // Ensure canvas has dimensions
+                ctx.clearRect(0,0, cw, ch); 
+                ctx.fillStyle = "rgba(255, 0, 0, 0.7)"; // More visible error
+                ctx.font = "bold 16px Arial";
+                ctx.textAlign = "center";
+                ctx.fillText("ERROR LOADING DRAGON IMAGE!", cw / 2, ch / 2 - 10);
+                ctx.font = "12px Arial";
+                ctx.fillText("Please check image path/data.", cw / 2, ch / 2 + 10);
+            }
+            if (!animationFrameId && !imageLoaded) {
+                 canvas.height = 350; 
+                 canvas.width = Math.min(window.innerWidth, 800); 
+                 bannerWidth = canvas.width;
+                 bannerHeight = canvas.height;
+                 animate(); 
+            }
+        };
+        
+        // CRITICAL: Always set the src. If placeholder wasn't replaced, this will trigger onerror.
+        dragonImage.src = dragonImageUrl; 
+        // If dragonImageUrl is still "DRAGON_IMAGE_DATA_URL_PLACEHOLDER", 
+        // the browser will try to load that as a URL, fail, and trigger onerror.
+        // If Python correctly replaced it with a Base64 data URL, it will attempt to load that.
+
+        let bannerWidth = canvas.width; 
+        let bannerHeight = canvas.height;
+        const mouse = { x: 0, y: 0, isOnCanvas: false };
+
+        function getMousePos(canvas, evt) {
+            const rect = canvas.getBoundingClientRect();
+            return { x: evt.clientX - rect.left, y: evt.clientY - rect.top };
+        }
+
+        canvas.addEventListener('mousemove', (evt) => {
+            const pos = getMousePos(canvas, evt);
+            mouse.x = pos.x; mouse.y = pos.y; mouse.isOnCanvas = true;
+        });
+        canvas.addEventListener('mouseleave', () => {
+            mouse.isOnCanvas = false; isBreathingFire = false;
+        });
+        canvas.addEventListener('mouseenter', () => { mouse.isOnCanvas = true; });
+
+        window.addEventListener('resize', () => {
+            let targetHeight = 350;
+            if (imageLoaded) {
+                canvas.height = targetHeight; 
+                canvas.width = dragonImage.naturalWidth * (canvas.height / dragonImage.naturalHeight);
+                if (canvas.width > window.innerWidth) {
+                    canvas.width = window.innerWidth;
+                    canvas.height = dragonImage.naturalHeight * (canvas.width / dragonImage.naturalWidth);
+                }
+            } else { 
+                canvas.height = targetHeight;
+                canvas.width = Math.min(window.innerWidth, 800); 
+            }
+            bannerWidth = canvas.width;
+            bannerHeight = canvas.height;
+            if (imageLoaded) setInteractiveParams();
+        });
+        
+        const dragonDisplay = {
+            x: 0, y: 0, bobOffset: 0,
+            bobSpeed: 0.05, bobAmount: 4,
+            sourceImageMouthX: 750, sourceImageMouthY: 575, // Adjust if your image's mouth is elsewhere
+            actualMouthX: 0, actualMouthY: 0,
+            detectionAngle: Math.PI / 2, detectionRange: 0, 
+        };
+
+        function setInteractiveParams() {
+            if (!imageLoaded || !dragonImage.naturalWidth || dragonImage.naturalWidth === 0) return;
+            const finalScale = canvas.width / dragonImage.naturalWidth;
+            dragonDisplay.actualMouthX = dragonDisplay.sourceImageMouthX * finalScale;
+            dragonDisplay.actualMouthY = dragonDisplay.sourceImageMouthY * finalScale;
+            dragonDisplay.detectionRange = Math.max(canvas.width, canvas.height) * 0.85;
+        }
+
+        let particles = []; 
+        const maxParticles = 300; 
+        const particleEmissionRate = 8; 
+        const particleSpeedBase = 6;  
+        const particleLifeBase = 75;   
+        let isBreathingFire = false;
+
+        // This is your original, working Particle class for the fire breath
+        class Particle { 
+            constructor(startX, startY, targetX, targetY) {
+                this.x = startX; this.y = startY;
+                const dx = targetX - startX; const dy = targetY - startY;
+                const angle = Math.atan2(dy, dx) + (Math.random() - 0.5) * 0.55;
+                const speed = particleSpeedBase * (Math.random() * 0.8 + 0.7); 
+                this.speedX = Math.cos(angle) * speed;
+                this.speedY = Math.sin(angle) * speed;
+                this.initialSizeAtMouth = Math.random() * 4 + 2;
+                this.maxAchievedSize = this.initialSizeAtMouth + (Math.random() * 18 + 12);
+                this.size = this.initialSizeAtMouth;
+                this.maxLife = particleLifeBase * (Math.random() * 0.6 + 0.7); 
+                this.life = this.maxLife;
+                this.timeSinceBirth = 0;
+                this.growthDurationRatio = 0.2;
+                this.opacity = 1; 
+                this.color = "";    
+                this.gravity = 0.025; 
+                this.drag = 0.985;  
+            }
+            update() {
+                this.x += this.speedX; this.y += this.speedY;
+                this.speedY += this.gravity; this.speedX *= this.drag;
+                this.life--; this.timeSinceBirth++;
+                const lifeRatio = Math.max(0, this.life / this.maxLife);
+                const growthPhaseEnd = this.maxLife * this.growthDurationRatio;
+                if (this.timeSinceBirth < growthPhaseEnd) {
+                    const growthProgress = this.timeSinceBirth / growthPhaseEnd;
+                    this.size = this.initialSizeAtMouth + (this.maxAchievedSize - this.initialSizeAtMouth) * Math.sqrt(growthProgress);
+                } else {
+                    const decayLifeRatio = Math.max(0, this.life / (this.maxLife * (1 - this.growthDurationRatio)));
+                    const currentBaseSize = this.maxAchievedSize * decayLifeRatio;
+                    this.size = Math.max(0, currentBaseSize * (0.7 + Math.random() * 0.6)); 
+                }
+                if (lifeRatio > 0.7) { 
+                    const L = 65 + (lifeRatio - 0.7) / 0.3 * 15; const H = 50 - (1 - lifeRatio) * 30;         
+                    this.color = `hsl(${Math.max(40,H)}, 100%, ${Math.min(80,L)}%)`;
+                    this.opacity = 0.85 + Math.random() * 0.15;
+                } else if (lifeRatio > 0.3) { 
+                    const H = 40 - (0.7 - lifeRatio) / 0.4 * 25; 
+                    this.color = `hsl(${Math.max(15,H)}, 100%, ${55 + (lifeRatio - 0.3)*15}%)`; 
+                    this.opacity = 0.65 + lifeRatio * 0.3;
+                } else { 
+                    const H = 15 - (0.3 - lifeRatio) / 0.3 * 10; 
+                    this.color = `hsl(${Math.max(5,H)}, 90%, ${35 + lifeRatio * 30}%)`; 
+                    this.opacity = 0.2 + lifeRatio * 2; 
+                }
+                this.opacity = Math.max(0, this.opacity * (lifeRatio * 0.8 + 0.2)); 
+            }
+            draw() { 
+                if (this.opacity <= 0 || this.size <= 0.1) return; 
+                ctx.globalAlpha = this.opacity; ctx.fillStyle = this.color; ctx.beginPath();
+                const aspect = 1.3 + Math.random() * 0.4; 
+                ctx.ellipse(this.x, this.y, this.size * (0.8 + Math.random()*0.4), this.size * aspect * (0.8 + Math.random()*0.4), Math.atan2(this.speedY, this.speedX) + (Math.random() - 0.5) * 0.2, 0, Math.PI * 2);
+                ctx.fill(); ctx.globalAlpha = 1;
+            }
+        }
+        
+        // This is your original, working function to draw the dragon
+        function drawDragonAndAnimate() { 
+            if (!imageLoaded) return; // Should not happen if called correctly, but good check
+            if (isBreathingFire) {
+                dragonDisplay.bobOffset = Math.sin(Date.now() * dragonDisplay.bobSpeed) * dragonDisplay.bobAmount;
+            } else {
+                dragonDisplay.bobOffset *= 0.90; 
+                if (Math.abs(dragonDisplay.bobOffset) < 0.1) dragonDisplay.bobOffset = 0;
+            }
+            ctx.drawImage(dragonImage, dragonDisplay.x, dragonDisplay.y + dragonDisplay.bobOffset, canvas.width, canvas.height);
+        }
+
+        // This is your original, working function to handle fire particles
+        function handleParticles() { 
+            if (!imageLoaded) return; // Should not happen if called correctly
+            const dxToMouse = mouse.x - dragonDisplay.actualMouthX;
+            const dyToMouse = (mouse.y) - (dragonDisplay.actualMouthY + dragonDisplay.bobOffset); 
+            const distanceToMouse = Math.sqrt(dxToMouse * dxToMouse + dyToMouse * dyToMouse);
+            let shouldBreathe = (mouse.isOnCanvas && dxToMouse > -dragonDisplay.actualMouthX*0.2 && distanceToMouse < dragonDisplay.detectionRange);
+            isBreathingFire = shouldBreathe;
+
+            if (isBreathingFire) {
+                for (let i = 0; i < particleEmissionRate; i++) { 
+                    if (particles.length < maxParticles) {
+                        particles.push(new Particle(dragonDisplay.actualMouthX, dragonDisplay.actualMouthY + dragonDisplay.bobOffset, mouse.x, mouse.y));
+                    }
+                }
+            }
+
+            for (let i = particles.length - 1; i >= 0; i--) {
+                particles[i].update(); particles[i].draw();
+                if (particles[i].life <= 0 || particles[i].opacity <= 0.01 || 
+                    particles[i].x > canvas.width + 100 || particles[i].x < -100 || 
+                    particles[i].y > canvas.height + 100 || particles[i].y < -100) {
+                    particles.splice(i, 1);
+                }
+            }
+        }
+
+        let animationFrameId = null; 
+        function animate() {
+            // Ensure canvas has dimensions, especially if image loading fails early
+            if ((!canvas.width || !canvas.height) && !imageLoaded) {
+                 canvas.height = 350;
+                 canvas.width = Math.min(window.innerWidth, 800); 
+                 bannerWidth = canvas.width;
+                 bannerHeight = canvas.height;
+            }
+
+            ctx.clearRect(0, 0, canvas.width, canvas.height); // Clear to transparent
+
+            // Draw your dragon (only if image has loaded)
+            if (imageLoaded) {
+                drawDragonAndAnimate(); 
+            }
+            // Note: If imageLoaded is false, the dragonImage.onerror handler
+            // should have already drawn an error message on the canvas.
+            // Or, if src was the placeholder, the initial error message was drawn.
+
+
+            // Handle and draw the dragon's interactive fire breath (only if image has loaded)
+            if (imageLoaded) {
+                handleParticles(); 
+            }
+
+            animationFrameId = requestAnimationFrame(animate);
+        }
+        
+        // Start animation loop.
+        // If dragonImage.src was set to the placeholder, onerror will handle drawing an error.
+        // If dragonImage.src was set to valid Base64, onload will set imageLoaded and params.
+        animate(); 
+
+    </script>
+</body>
+</html>

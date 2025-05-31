@@ -53,28 +53,23 @@ def fetch_item_details(item_url_suffix):
 def load_and_combine_srd_data_from_api():
     all_srd_items = []
     
-    has_st_progress = hasattr(st, 'progress') # Check if st.progress is available
+    status_updates_placeholder = st.empty() 
+
+    has_st_progress = hasattr(st, 'progress')
+    overall_progress_bar = None # Initialize to None
     if has_st_progress:
-        progress_bar = st.progress(0, text="Initializing data load...")
+        overall_progress_bar = st.progress(0, text="Initializing data load...") # Use consistent name
     
     total_categories = len(CATEGORIES_TO_FETCH)
     
-    # Create a single placeholder for status messages *inside* the cached function
-    # This means the placeholder is created/cleared each time the cached function *runs*
-    # (i.e., when cache is empty or expired).
-    # For messages outside the spinner during data loading, they'd need to be managed differently if this function is cached.
-    # However, st.info/st.warning called here will appear on the page during the cache computation.
-    # Let's use a local list to gather messages and display them once if needed, or use st.write
-    
-    status_updates_placeholder = st.empty() # For dynamic messages during loading
-
     for i, (category_name, category_endpoint_suffix) in enumerate(CATEGORIES_TO_FETCH.items()):
         status_updates_placeholder.info(f"Fetching list of {category_name.lower()}...")
         item_list = fetch_category_list(category_endpoint_suffix) 
         
         if not item_list:
             st.warning(f"Could not fetch or an error occurred for the list of {category_name}. Skipping.")
-            if has_st_progress: progress_bar.progress( (i + 1) / total_categories, text=f"Processed {category_name} (skipped)")
+            if has_st_progress and overall_progress_bar: # Check if overall_progress_bar was created
+                overall_progress_bar.progress( (i + 1) / total_categories, text=f"Processed {category_name} (skipped)")
             continue
 
         status_updates_placeholder.info(f"Fetching details for {len(item_list)} {category_name.lower()}...")
@@ -122,11 +117,12 @@ def load_and_combine_srd_data_from_api():
                 })
 
         status_updates_placeholder.info(f"Fetched details for {details_fetched_count} / {len(item_list)} {category_name.lower()}. Compiling data...")
-        if has_st_progress: overall_progress_bar.progress( (i + 1) / total_categories, text=f"Completed {category_name}")
+        if has_st_progress and overall_progress_bar: # Check if overall_progress_bar was created
+            overall_progress_bar.progress( (i + 1) / total_categories, text=f"Completed {category_name}")
         
-    status_updates_placeholder.empty() # Clear the last status message
-    if has_st_progress: 
-        overall_progress_bar.empty() # Remove the progress bar
+    status_updates_placeholder.empty() 
+    if has_st_progress and overall_progress_bar: # Check if overall_progress_bar was created
+        overall_progress_bar.empty() 
 
     if not all_srd_items:
          st.error("Failed to load any SRD data from the API. Please check your internet connection or try again later.")
@@ -138,15 +134,11 @@ st.title("📚 Unified Rulebook Search (D&D 5e SRD via API)")
 st.caption("Search across SRD Spells, Monsters, Magic Items, Equipment, and Conditions.")
 st.markdown("Data is fetched from [dnd5eapi.co](https://www.dnd5eapi.co/) and cached. Initial load may take a minute or two.")
 
-# The st.spinner should wrap the call to the cached function
 with st.spinner("Loading SRD data from API... This may take a moment on the very first run..."):
     srd_combined_data = load_and_combine_srd_data_from_api()
 
-# After the spinner, srd_combined_data is available (or an empty list if loading failed)
 if not srd_combined_data:
-    # More specific errors about list fetching are now within fetch_category_list
-    # load_and_combine_srd_data_from_api shows an error if all_srd_items is empty
-    st.error("SRD data could not be fully loaded. The search functionality will be unavailable.")
+    st.error("SRD data could not be loaded. The search functionality will be unavailable. Check previous messages for errors during data fetching.")
 else:
     st.success(f"SRD Data loaded! {len(srd_combined_data)} items available for search.")
     
@@ -173,7 +165,6 @@ else:
                         st.markdown(f"### {data.get('name', 'Unknown Entry')}")
                         st.markdown("---")
 
-                        # (Detailed formatting for each category starts here - same as previous version)
                         if category == "Spells":
                             level_text = str(data.get('level', 'N/A')) 
                             school_name = data.get('school', {}).get('name', 'N/A')
@@ -254,7 +245,7 @@ else:
                             st.markdown("---")
                             for section_title, section_key in [("Special Abilities", "special_abilities"), ("Actions", "actions"), ("Reactions", "reactions"), ("Legendary Actions", "legendary_actions")]:
                                 section_list = data.get(section_key, [])
-                                if section_list: 
+                                if section__list: # Ensure it's not None and not empty
                                     st.markdown(f"**{section_title}**")
                                     for ability in section_list:
                                         if isinstance(ability, dict):

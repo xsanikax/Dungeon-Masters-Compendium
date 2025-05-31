@@ -53,22 +53,31 @@ def fetch_item_details(item_url_suffix):
 def load_and_combine_srd_data_from_api():
     all_srd_items = []
     
-    has_st_progress = hasattr(st, 'progress')
+    has_st_progress = hasattr(st, 'progress') # Check if st.progress is available
     if has_st_progress:
-        progress_bar = st.progress(0)
+        progress_bar = st.progress(0, text="Initializing data load...")
     
     total_categories = len(CATEGORIES_TO_FETCH)
     
+    # Create a single placeholder for status messages *inside* the cached function
+    # This means the placeholder is created/cleared each time the cached function *runs*
+    # (i.e., when cache is empty or expired).
+    # For messages outside the spinner during data loading, they'd need to be managed differently if this function is cached.
+    # However, st.info/st.warning called here will appear on the page during the cache computation.
+    # Let's use a local list to gather messages and display them once if needed, or use st.write
+    
+    status_updates_placeholder = st.empty() # For dynamic messages during loading
+
     for i, (category_name, category_endpoint_suffix) in enumerate(CATEGORIES_TO_FETCH.items()):
-        if hasattr(st, 'info'): st.info(f"Fetching list of {category_name.lower()}...")
+        status_updates_placeholder.info(f"Fetching list of {category_name.lower()}...")
         item_list = fetch_category_list(category_endpoint_suffix) 
         
         if not item_list:
-            if hasattr(st, 'warning'): st.warning(f"Could not fetch list for {category_name}. Skipping.")
-            if has_st_progress: progress_bar.progress((i + 1) / total_categories)
+            st.warning(f"Could not fetch or an error occurred for the list of {category_name}. Skipping.")
+            if has_st_progress: progress_bar.progress( (i + 1) / total_categories, text=f"Processed {category_name} (skipped)")
             continue
 
-        if hasattr(st, 'info'): st.info(f"Fetching details for {len(item_list)} {category_name.lower()}...")
+        status_updates_placeholder.info(f"Fetching details for {len(item_list)} {category_name.lower()}...")
         
         details_fetched_count = 0
         for j, item_summary in enumerate(item_list):
@@ -112,14 +121,16 @@ def load_and_combine_srd_data_from_api():
                     "raw_data": item_detail 
                 })
 
-        if hasattr(st, 'info'): st.info(f"Fetched details for {details_fetched_count} / {len(item_list)} {category_name.lower()}.")
-        if has_st_progress: progress_bar.progress((i + 1) / total_categories)
+        status_updates_placeholder.info(f"Fetched details for {details_fetched_count} / {len(item_list)} {category_name.lower()}. Compiling data...")
+        if has_st_progress: overall_progress_bar.progress( (i + 1) / total_categories, text=f"Completed {category_name}")
         
-    if not all_srd_items and hasattr(st, 'error'):
+    status_updates_placeholder.empty() # Clear the last status message
+    if has_st_progress: 
+        overall_progress_bar.empty() # Remove the progress bar
+
+    if not all_srd_items:
          st.error("Failed to load any SRD data from the API. Please check your internet connection or try again later.")
          return []
-    if has_st_progress: 
-        progress_bar.progress(1.0) 
     return all_srd_items
 
 # --- Main app UI ---
@@ -127,13 +138,18 @@ st.title("📚 Unified Rulebook Search (D&D 5e SRD via API)")
 st.caption("Search across SRD Spells, Monsters, Magic Items, Equipment, and Conditions.")
 st.markdown("Data is fetched from [dnd5eapi.co](https://www.dnd5eapi.co/) and cached. Initial load may take a minute or two.")
 
+# The st.spinner should wrap the call to the cached function
 with st.spinner("Loading SRD data from API... This may take a moment on the very first run..."):
     srd_combined_data = load_and_combine_srd_data_from_api()
 
+# After the spinner, srd_combined_data is available (or an empty list if loading failed)
 if not srd_combined_data:
-    st.error("SRD data could not be loaded. The search functionality will not be available. Check previous messages for errors during data fetching.")
+    # More specific errors about list fetching are now within fetch_category_list
+    # load_and_combine_srd_data_from_api shows an error if all_srd_items is empty
+    st.error("SRD data could not be fully loaded. The search functionality will be unavailable.")
 else:
     st.success(f"SRD Data loaded! {len(srd_combined_data)} items available for search.")
+    
     search_query = st.text_input("Search all SRD content:", placeholder="e.g., Fireball, Goblin, Grapple, Longsword, Blinded")
 
     if search_query:
@@ -141,14 +157,14 @@ else:
         query = search_query.lower().strip()
         
         if query: 
-            for item_wrapper in srd_combined_data: # Renamed loop variable
-                item_search_text = item_wrapper.get("search_text") # Use .get for safety
+            for item_wrapper in srd_combined_data: 
+                item_search_text = item_wrapper.get("search_text") 
                 if item_search_text and query in item_search_text: 
                     results.append(item_wrapper)
             
             if results:
                 st.subheader(f"Found {len(results)} item(s) matching '{search_query}':")
-                for item_wrapper in results: # Use the same renamed loop variable
+                for item_wrapper in results: 
                     data = item_wrapper['raw_data'] 
                     category = item_wrapper['category']
                     name = item_wrapper.get('name', 'N/A')
@@ -157,6 +173,7 @@ else:
                         st.markdown(f"### {data.get('name', 'Unknown Entry')}")
                         st.markdown("---")
 
+                        # (Detailed formatting for each category starts here - same as previous version)
                         if category == "Spells":
                             level_text = str(data.get('level', 'N/A')) 
                             school_name = data.get('school', {}).get('name', 'N/A')
@@ -171,7 +188,7 @@ else:
                             components = data.get('components', [])
                             material = data.get('material', '')
                             comp_str = ", ".join(components)
-                            if "M" in components and material and material.strip() != ".": # Check material isn't just "."
+                            if "M" in components and material and material.strip() != ".": 
                                 comp_str += f" ({material.strip('.')})" 
                             st.markdown(f"**Components:** {comp_str if comp_str else 'N/A'}")
                             
@@ -199,7 +216,7 @@ else:
                             
                             if data.get('damage') and isinstance(data.get('damage'), dict):
                                 damage_info = data['damage']
-                                damage_type_info = damage_info.get('damage_type', {}) # Ensure damage_type_info is a dict
+                                damage_type_info = damage_info.get('damage_type', {}) 
                                 damage_type = damage_type_info.get('name', 'N/A') if isinstance(damage_type_info, dict) else 'N/A'
                                 st.markdown("---")
                                 st.markdown(f"**Damage Type:** {damage_type}")
@@ -210,47 +227,34 @@ else:
                         
                         elif category == "Monsters":
                             st.markdown(f"**Size:** {data.get('size', 'N/A')} | **Type:** {data.get('type', 'N/A')} | **Alignment:** {data.get('alignment', 'N/A')}")
-                            
-                            # Handle AC - can be int or list of objects in some D&D APIs, dnd5eapi.co usually gives int directly for monsters
                             ac_value = data.get('armor_class', 'N/A')
-                            if isinstance(ac_value, list) and ac_value: # Check if it's a non-empty list (like AC with type)
+                            ac_display = str(ac_value) 
+                            if isinstance(ac_value, list) and ac_value: 
                                 ac_display = f"{ac_value[0].get('value')} ({ac_value[0].get('type')})" if isinstance(ac_value[0], dict) else str(ac_value[0])
-                            else:
-                                ac_display = str(ac_value)
                             st.markdown(f"**Armor Class:** {ac_display}")
                             st.markdown(f"**Hit Points:** {data.get('hit_points', 'N/A')} ({data.get('hit_dice', 'N/A')})")
-                            
                             speed_data = data.get('speed', {})
                             speed_str = ", ".join([f"{k.capitalize().replace('_', ' ')}: {v}" for k, v in speed_data.items() if v])
                             st.markdown(f"**Speed:** {speed_str if speed_str else 'N/A'}")
-
                             st.markdown(f"**STR:** {data.get('strength', 'N/A')} | **DEX:** {data.get('dexterity', 'N/A')} | **CON:** {data.get('constitution', 'N/A')} | **INT:** {data.get('intelligence', 'N/A')} | **WIS:** {data.get('wisdom', 'N/A')} | **CHA:** {data.get('charisma', 'N/A')}")
-                            
                             prof_list = [f"{p.get('proficiency', {}).get('name','').replace('Saving Throw: ', '').replace('Skill: ', '')} +{p.get('value','')}" for p in data.get('proficiencies', []) if p.get('proficiency')]
                             if prof_list: st.markdown(f"**Saving Throws & Skills Proficiencies:** {', '.join(prof_list)}")
-                            
                             if data.get('damage_vulnerabilities'): st.markdown(f"**Damage Vulnerabilities:** {', '.join(data.get('damage_vulnerabilities'))}")
                             if data.get('damage_resistances'): st.markdown(f"**Damage Resistances:** {', '.join(data.get('damage_resistances'))}")
                             if data.get('damage_immunities'): st.markdown(f"**Damage Immunities:** {', '.join(data.get('damage_immunities'))}")
-                            
                             condition_immunities_list = data.get('condition_immunities', [])
                             if condition_immunities_list: 
                                 condition_immunities_str = ", ".join([ci.get('name', '') for ci in condition_immunities_list if isinstance(ci, dict) and ci.get('name')])
                                 if condition_immunities_str: st.markdown(f"**Condition Immunities:** {condition_immunities_str}")
-                                
                             senses_data = data.get('senses', {})
                             senses_str = ", ".join([f"{k.replace('_', ' ').capitalize()}: {v}" for k, v in senses_data.items() if v])
                             st.markdown(f"**Senses:** {senses_str if senses_str else 'N/A'}")
                             st.markdown(f"**Languages:** {data.get('languages', 'N/A')}")
                             st.markdown(f"**Challenge Rating:** {data.get('challenge_rating', 'N/A')} ({data.get('xp', 0)} XP)")
                             st.markdown("---")
-
-                            for section_title, section_key in [("Special Abilities", "special_abilities"), 
-                                                              ("Actions", "actions"), 
-                                                              ("Reactions", "reactions"), 
-                                                              ("Legendary Actions", "legendary_actions")]:
+                            for section_title, section_key in [("Special Abilities", "special_abilities"), ("Actions", "actions"), ("Reactions", "reactions"), ("Legendary Actions", "legendary_actions")]:
                                 section_list = data.get(section_key, [])
-                                if section_list: # Ensure it's not None
+                                if section_list: 
                                     st.markdown(f"**{section_title}**")
                                     for ability in section_list:
                                         if isinstance(ability, dict):
@@ -259,7 +263,7 @@ else:
                         
                         elif category == "Magic Items":
                             st.markdown(f"**Category:** {data.get('equipment_category', {}).get('name', 'N/A')}")
-                            rarity_data = data.get('rarity', {}) # Rarity is an object in dnd5eapi for items
+                            rarity_data = data.get('rarity', {}) 
                             st.markdown(f"**Rarity:** {rarity_data.get('name', 'N/A') if isinstance(rarity_data, dict) else str(rarity_data)}")
                             st.markdown("---")
                             desc = data.get('desc', [])
@@ -270,33 +274,27 @@ else:
                             if data.get('gear_category', {}).get('name'): st.markdown(f"**Gear Category:** {data.get('gear_category',{}).get('name','N/A')}")
                             if data.get('armor_category'): st.markdown(f"**Armor Category:** {data.get('armor_category', 'N/A')}")
                             if data.get('weapon_category'): st.markdown(f"**Weapon Category:** {data.get('weapon_category', 'N/A')} ({data.get('weapon_range', 'N/A')})")
-                            
                             cost = data.get('cost', {})
                             st.markdown(f"**Cost:** {cost.get('quantity', 0)} {cost.get('unit', '')}")
                             if data.get('weight'): st.markdown(f"**Weight:** {data.get('weight')} lb.")
-
                             if data.get('damage') and isinstance(data.get('damage'), dict):
                                 dmg = data['damage']
                                 dmg_dice = dmg.get('damage_dice', 'N/A')
                                 dmg_type_info = dmg.get('damage_type', {})
                                 dmg_type = dmg_type_info.get('name', 'N/A') if isinstance(dmg_type_info, dict) else 'N/A'
                                 st.markdown(f"**Damage:** {dmg_dice} {dmg_type}")
-                            
                             if data.get('armor_class') and isinstance(data.get('armor_class'), dict):
                                 ac = data['armor_class']
                                 ac_str = f"{ac.get('base',0)}"
                                 if ac.get('dex_bonus'): ac_str += " + Dex bonus"
-                                if ac.get('max_bonus') is not None: ac_str += f" (max {ac.get('max_bonus')})" # Check for None
+                                if ac.get('max_bonus') is not None: ac_str += f" (max {ac.get('max_bonus')})" 
                                 st.markdown(f"**Armor Class:** {ac_str}")
-
                             if data.get('str_minimum', 0) > 0 : st.markdown(f"**Strength Minimum:** {data.get('str_minimum')}")
                             if data.get('stealth_disadvantage'): st.markdown(f"**Stealth:** Disadvantage")
-
                             properties_list = data.get('properties')
-                            if properties_list and isinstance(properties_list, list): # Ensure it's a list
+                            if properties_list and isinstance(properties_list, list): 
                                 prop_names = [p.get('name') for p in properties_list if isinstance(p, dict) and p.get('name')]
                                 if prop_names: st.markdown(f"**Properties:** {', '.join(prop_names)}")
-                            
                             st.markdown("---")
                             desc = data.get('desc', []) 
                             if desc:
@@ -307,7 +305,7 @@ else:
                             st.markdown("\n\n".join(desc) if isinstance(desc, list) else str(desc))
                         
                         else: 
-                            st.json(data) # Fallback for any other unexpected category
+                            st.json(data) 
             elif search_query: 
                 st.info(f"No items found in the SRD matching '{search_query}'.")
         else:

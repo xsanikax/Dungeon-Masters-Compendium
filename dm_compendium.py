@@ -74,7 +74,7 @@ if dragon_banner_html_content:
 # IMPORTANT: If you use this, DO NOT commit this file with your actual key to GitHub.
 # When deploying to Streamlit Cloud, make this an empty string: LOCAL_TEST_API_KEY = ""
 # and set your key in st.secrets on Streamlit Cloud.
-LOCAL_TEST_API_KEY = "AIzaSyDH0lVlU65iab0WTZu8rbWrQn3A-azigO8" # <<< PASTE YOUR API KEY HERE FOR LOCAL RUNNING
+LOCAL_TEST_API_KEY = "" # <<< PASTE YOUR API KEY HERE FOR LOCAL RUNNING
 
 GEMINI_API_KEY_TO_USE = ""
 

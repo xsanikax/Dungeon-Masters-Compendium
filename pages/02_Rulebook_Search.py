@@ -32,6 +32,7 @@ def fetch_category_list(category_endpoint_suffix):
         response.raise_for_status()  
         return response.json().get("results", [])
     except requests.exceptions.RequestException as e:
+        # This error will be displayed on the page if fetching a category list fails
         st.error(f"Error fetching category list for {category_endpoint_suffix}: {e}")
         return []
 
@@ -45,7 +46,7 @@ def fetch_item_details(item_url_suffix):
         response.raise_for_status()
         return response.json()
     except requests.exceptions.RequestException as e:
-        print(f"Error fetching details for {full_url}: {e}") 
+        print(f"Error fetching details for {full_url}: {e}") # Log to console for debugging
         return None
 
 # --- Function to load, preprocess, and combine all SRD data from the API ---
@@ -53,26 +54,29 @@ def fetch_item_details(item_url_suffix):
 def load_and_combine_srd_data_from_api():
     all_srd_items = []
     
-    status_updates_placeholder = st.empty() 
-
     has_st_progress = hasattr(st, 'progress')
     overall_progress_bar = None # Initialize to None
     if has_st_progress:
-        overall_progress_bar = st.progress(0, text="Initializing data load...") # Use consistent name
+        overall_progress_bar = st.progress(0, text="Initializing data load...") 
     
     total_categories = len(CATEGORIES_TO_FETCH)
     
     for i, (category_name, category_endpoint_suffix) in enumerate(CATEGORIES_TO_FETCH.items()):
-        status_updates_placeholder.info(f"Fetching list of {category_name.lower()}...")
+        current_progress_value = i / total_categories
+        if has_st_progress and overall_progress_bar:
+             overall_progress_bar.progress(current_progress_value, text=f"Fetching list: {category_name}...")
+        
         item_list = fetch_category_list(category_endpoint_suffix) 
         
         if not item_list:
-            st.warning(f"Could not fetch or an error occurred for the list of {category_name}. Skipping.")
-            if has_st_progress and overall_progress_bar: # Check if overall_progress_bar was created
-                overall_progress_bar.progress( (i + 1) / total_categories, text=f"Processed {category_name} (skipped)")
+            # A warning for skipped categories will be shown on the page by fetch_category_list or here
+            st.warning(f"Could not fetch or an error occurred for the list of {category_name}. Skipping that category.")
+            if has_st_progress and overall_progress_bar: 
+                overall_progress_bar.progress( (i + 1) / total_categories, text=f"Skipped {category_name}")
             continue
 
-        status_updates_placeholder.info(f"Fetching details for {len(item_list)} {category_name.lower()}...")
+        if has_st_progress and overall_progress_bar:
+            overall_progress_bar.progress(current_progress_value, text=f"Fetching details for {len(item_list)} {category_name.lower()}...")
         
         details_fetched_count = 0
         for j, item_summary in enumerate(item_list):
@@ -80,7 +84,7 @@ def load_and_combine_srd_data_from_api():
             if item_detail:
                 details_fetched_count +=1
                 name = item_detail.get("name", "Unknown Name")
-                search_text_parts = [name.lower()]
+                search_text_parts = [name.lower()] 
                 
                 if category_name == "Spells":
                     desc_list = item_detail.get("desc", [])
@@ -89,6 +93,7 @@ def load_and_combine_srd_data_from_api():
                 elif category_name == "Monsters":
                     search_text_parts.append(item_detail.get("type", "").lower())
                     search_text_parts.append(item_detail.get("size", "").lower())
+                    search_text_parts.append(item_detail.get("alignment", "").lower()) # Added alignment
                     for key in ["special_abilities", "actions", "legendary_actions", "reactions"]:
                         abilities_list = item_detail.get(key, [])
                         if abilities_list is None: abilities_list = [] 
@@ -110,22 +115,30 @@ def load_and_combine_srd_data_from_api():
                 search_text = re.sub(r'\s+', ' ', search_text).strip()
 
                 all_srd_items.append({
-                    "name": name,
+                    "name": name, 
                     "category": category_name,
-                    "search_text": search_text,
+                    "search_text": search_text, 
                     "raw_data": item_detail 
                 })
+            
+            # Update progress more granularly within detail fetching if desired
+            if has_st_progress and overall_progress_bar and (j + 1) % 20 == 0: # Update every 20 items
+                # Calculate progress within the current category more smoothly
+                progress_within_category = (j + 1) / len(item_list)
+                # Overall progress is how many full categories done, plus fraction of current one
+                current_overall_progress = (i + progress_within_category) / total_categories
+                overall_progress_bar.progress(min(current_overall_progress, 1.0), text=f"Fetching {category_name}: {j+1}/{len(item_list)}")
 
-        status_updates_placeholder.info(f"Fetched details for {details_fetched_count} / {len(item_list)} {category_name.lower()}. Compiling data...")
-        if has_st_progress and overall_progress_bar: # Check if overall_progress_bar was created
-            overall_progress_bar.progress( (i + 1) / total_categories, text=f"Completed {category_name}")
+        if has_st_progress and overall_progress_bar: 
+            overall_progress_bar.progress( (i + 1) / total_categories, text=f"Completed fetching {category_name} ({details_fetched_count} items)")
         
-    status_updates_placeholder.empty() 
-    if has_st_progress and overall_progress_bar: # Check if overall_progress_bar was created
+    if has_st_progress and overall_progress_bar: 
         overall_progress_bar.empty() 
 
     if not all_srd_items:
-         st.error("Failed to load any SRD data from the API. Please check your internet connection or try again later.")
+         # Errors from fetch_category_list will have already been displayed by st.error
+         # This is a fallback if everything returned empty lists.
+         st.error("Failed to load any SRD data from the API. Please ensure an internet connection.")
          return []
     return all_srd_items
 
@@ -134,26 +147,56 @@ st.title("📚 Unified Rulebook Search (D&D 5e SRD via API)")
 st.caption("Search across SRD Spells, Monsters, Magic Items, Equipment, and Conditions.")
 st.markdown("Data is fetched from [dnd5eapi.co](https://www.dnd5eapi.co/) and cached. Initial load may take a minute or two.")
 
+# The st.spinner will show while the load_and_combine_srd_data_from_api function executes for the first time
+# or when the cache is invalid.
 with st.spinner("Loading SRD data from API... This may take a moment on the very first run..."):
     srd_combined_data = load_and_combine_srd_data_from_api()
 
+# After the spinner, srd_combined_data is available (or an empty list if loading failed)
 if not srd_combined_data:
-    st.error("SRD data could not be loaded. The search functionality will be unavailable. Check previous messages for errors during data fetching.")
+    st.error("SRD data could not be fully loaded. The search functionality will be unavailable. Check for specific errors during data fetching above (e.g., category list errors).")
 else:
     st.success(f"SRD Data loaded! {len(srd_combined_data)} items available for search.")
     
-    search_query = st.text_input("Search all SRD content:", placeholder="e.g., Fireball, Goblin, Grapple, Longsword, Blinded")
+    search_query = st.text_input("Search all SRD content:", placeholder="e.g., Fireball, Orc, Grapple, Longsword, Blinded")
 
     if search_query:
         results = []
         query = search_query.lower().strip()
         
         if query: 
-            for item_wrapper in srd_combined_data: 
-                item_search_text = item_wrapper.get("search_text") 
-                if item_search_text and query in item_search_text: 
-                    results.append(item_wrapper)
+            name_matches = []
+            text_matches = []
             
+            for item_wrapper in srd_combined_data: 
+                item_name_lower = item_wrapper.get("name", "").lower()
+                # Ensure item_search_text is a string before 'in' operator
+                item_search_text = str(item_wrapper.get("search_text", "")) 
+
+                is_name_match = query in item_name_lower
+                
+                if is_name_match:
+                    name_matches.append(item_wrapper)
+                elif query in item_search_text: 
+                    text_matches.append(item_wrapper)
+            
+            final_results = []
+            added_names_categories = set() 
+            
+            for item in name_matches:
+                unique_key = (item.get("name"), item.get("category"))
+                if unique_key not in added_names_categories:
+                    final_results.append(item)
+                    added_names_categories.add(unique_key)
+            
+            for item in text_matches:
+                unique_key = (item.get("name"), item.get("category"))
+                if unique_key not in added_names_categories: 
+                    final_results.append(item)
+                    added_names_categories.add(unique_key)
+            
+            results = final_results
+
             if results:
                 st.subheader(f"Found {len(results)} item(s) matching '{search_query}':")
                 for item_wrapper in results: 
@@ -172,39 +215,32 @@ else:
                                 st.markdown(f"*{school_name} Cantrip*")
                             else:
                                 st.markdown(f"*Level {level_text} {school_name}*")
-                            
                             st.markdown(f"**Casting Time:** {data.get('casting_time', 'N/A')}")
                             st.markdown(f"**Range:** {data.get('range', 'N/A')}")
-                            
                             components = data.get('components', [])
                             material = data.get('material', '')
                             comp_str = ", ".join(components)
                             if "M" in components and material and material.strip() != ".": 
                                 comp_str += f" ({material.strip('.')})" 
                             st.markdown(f"**Components:** {comp_str if comp_str else 'N/A'}")
-                            
                             st.markdown(f"**Duration:** {data.get('duration', 'N/A')}")
-                            
                             ritual_text = "Yes" if data.get('ritual') else "No"
                             concentration_text = "Yes" if data.get('concentration') else "No"
                             st.markdown(f"**Ritual:** {ritual_text} | **Concentration:** {concentration_text}")
-                            
                             st.markdown("---")
                             description = data.get('desc', [])
                             st.markdown("\n\n".join(description) if isinstance(description, list) else str(description))
-
                             higher_level = data.get('higher_level', [])
                             if higher_level:
                                 st.markdown("---")
                                 st.markdown("**At Higher Levels:**")
                                 st.markdown("\n\n".join(higher_level) if isinstance(higher_level, list) else str(higher_level))
-
                             classes_list = data.get('classes', [])
                             if classes_list:
                                 class_names = [c.get('name') for c in classes_list if isinstance(c, dict) and c.get('name')]
-                                st.markdown("---")
-                                st.markdown(f"**Classes:** {', '.join(class_names)}")
-                            
+                                if class_names: # Ensure list is not empty before joining
+                                    st.markdown("---")
+                                    st.markdown(f"**Classes:** {', '.join(class_names)}")
                             if data.get('damage') and isinstance(data.get('damage'), dict):
                                 damage_info = data['damage']
                                 damage_type_info = damage_info.get('damage_type', {}) 
@@ -218,10 +254,12 @@ else:
                         
                         elif category == "Monsters":
                             st.markdown(f"**Size:** {data.get('size', 'N/A')} | **Type:** {data.get('type', 'N/A')} | **Alignment:** {data.get('alignment', 'N/A')}")
-                            ac_value = data.get('armor_class', 'N/A')
-                            ac_display = str(ac_value) 
+                            ac_value = data.get('armor_class', []) # API returns list for AC for monsters
+                            ac_display = "N/A"
                             if isinstance(ac_value, list) and ac_value: 
-                                ac_display = f"{ac_value[0].get('value')} ({ac_value[0].get('type')})" if isinstance(ac_value[0], dict) else str(ac_value[0])
+                                ac_display = f"{ac_value[0].get('value')} ({ac_value[0].get('type')})" if isinstance(ac_value[0], dict) else str(ac_value[0].get('value'))
+                            elif isinstance(ac_value, (int,str)): # Fallback if it's a direct value (not typical for this API)
+                                ac_display = str(ac_value)
                             st.markdown(f"**Armor Class:** {ac_display}")
                             st.markdown(f"**Hit Points:** {data.get('hit_points', 'N/A')} ({data.get('hit_dice', 'N/A')})")
                             speed_data = data.get('speed', {})
@@ -244,8 +282,8 @@ else:
                             st.markdown(f"**Challenge Rating:** {data.get('challenge_rating', 'N/A')} ({data.get('xp', 0)} XP)")
                             st.markdown("---")
                             for section_title, section_key in [("Special Abilities", "special_abilities"), ("Actions", "actions"), ("Reactions", "reactions"), ("Legendary Actions", "legendary_actions")]:
-                                section_list = data.get(section_key, [])
-                                if section__list: # Ensure it's not None and not empty
+                                section_list = data.get(section_key, []) 
+                                if section_list: 
                                     st.markdown(f"**{section_title}**")
                                     for ability in section_list:
                                         if isinstance(ability, dict):
@@ -274,12 +312,15 @@ else:
                                 dmg_type_info = dmg.get('damage_type', {})
                                 dmg_type = dmg_type_info.get('name', 'N/A') if isinstance(dmg_type_info, dict) else 'N/A'
                                 st.markdown(f"**Damage:** {dmg_dice} {dmg_type}")
-                            if data.get('armor_class') and isinstance(data.get('armor_class'), dict):
+                            if data.get('armor_class') and isinstance(data.get('armor_class'), dict): # Armor AC is an object
                                 ac = data['armor_class']
                                 ac_str = f"{ac.get('base',0)}"
                                 if ac.get('dex_bonus'): ac_str += " + Dex bonus"
                                 if ac.get('max_bonus') is not None: ac_str += f" (max {ac.get('max_bonus')})" 
                                 st.markdown(f"**Armor Class:** {ac_str}")
+                            elif isinstance(data.get('armor_class'), (int, float)): # Other equipment might have simple AC
+                                st.markdown(f"**Armor Class:** {data.get('armor_class')}")
+
                             if data.get('str_minimum', 0) > 0 : st.markdown(f"**Strength Minimum:** {data.get('str_minimum')}")
                             if data.get('stealth_disadvantage'): st.markdown(f"**Stealth:** Disadvantage")
                             properties_list = data.get('properties')
@@ -288,7 +329,7 @@ else:
                                 if prop_names: st.markdown(f"**Properties:** {', '.join(prop_names)}")
                             st.markdown("---")
                             desc = data.get('desc', []) 
-                            if desc:
+                            if desc: # Equipment can also have a top-level desc
                                 st.markdown("\n\n".join(desc) if isinstance(desc, list) else str(desc))
                         
                         elif category == "Conditions":
